@@ -1,7 +1,8 @@
 # original author: signatrix
 # adapted from https://github.com/signatrix/efficientdet/blob/master/train.py
 # modified by Zylo117
-
+from comet_ml import Experiment
+experiment = Experiment()
 import argparse
 import datetime
 import os
@@ -18,9 +19,13 @@ from tqdm.autonotebook import tqdm
 
 from backbone import EfficientDetBackbone
 from efficientdet.dataset import CocoDataset, Resizer, Normalizer, Augmenter, collater
+from efficientdet.utils import BBoxTransform, ClipBoxes
 from efficientdet.loss import FocalLoss
 from utils.sync_batchnorm import patch_replication_callback
-from utils.utils import replace_w_sync_bn, CustomDataParallel, get_last_weights, init_weights, boolean_string
+from utils.utils import replace_w_sync_bn, CustomDataParallel, get_last_weights, \
+                        init_weights, boolean_string, postprocess
+import cv2
+from numpy import array as to_numpy_array
 
 
 class Params:
@@ -74,15 +79,44 @@ class ModelWithLoss(nn.Module):
     def forward(self, imgs, annotations, obj_list=None):
         _, regression, classification, anchors = self.model(imgs)
         if self.debug:
-            cls_loss, reg_loss = self.criterion(classification, regression, anchors, annotations,
+            cls_loss, reg_loss = self.criterion(classification, regression,
+                                                anchors, annotations,
                                                 imgs=imgs, obj_list=obj_list)
         else:
-            cls_loss, reg_loss = self.criterion(classification, regression, anchors, annotations)
-        return cls_loss, reg_loss
+            cls_loss, reg_loss = self.criterion(classification, regression,
+                                                anchors, annotations)
+        return cls_loss, reg_loss, regression, classification, anchors
+
+
+def plot_boxes(x, regression, classification, anchors, regressBoxes,
+               clipBoxes, mean, std):
+    preds = postprocess(x, anchors, regression,
+                        classification, regressBoxes,
+                        clipBoxes, 0.20, 0.20)
+    ndarr = ((x[0, ...].permute(1, 2, 0).to('cpu').numpy() *
+             np.array(std)) + np.array(mean)) * 255.0
+    ndarr = ndarr.astype(np.uint8)
+    preds = preds[0]
+    scores = preds['scores']
+    class_ids = preds['class_ids']
+    rois = preds['rois']
+    if rois.shape[0] > 0:
+        bbox_score = scores
+        for roi_id in range(rois.shape[0]):
+            score = float(bbox_score[roi_id])
+            label = int(class_ids[roi_id])
+            box = rois[roi_id, :].astype('int')
+            if label:
+                cv2.rectangle(ndarr, (box[0], box[1]), (box[2],
+                              box[3]), (0, 255, 0), 2)
+    return torch.from_numpy(to_numpy_array(ndarr))
 
 
 def train(opt):
+    regressBoxes = BBoxTransform()
+    clipBoxes = ClipBoxes()
     params = Params(f'projects/{opt.project}.yml')
+    experiment.log_others(yaml.safe_load(open(f'projects/{opt.project}.yml')))
 
     if params.num_gpus == 0:
         os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
@@ -123,6 +157,7 @@ def train(opt):
 
     model = EfficientDetBackbone(num_classes=len(params.obj_list), compound_coef=opt.compound_coef,
                                  ratios=eval(params.anchors_ratios), scales=eval(params.anchors_scales))
+    
 
     # load last weights
     if opt.load_weights is not None:
@@ -136,7 +171,7 @@ def train(opt):
             last_step = 0
 
         try:
-            ret = model.load_state_dict(torch.load(weights_path), strict=False)
+            ret = model.load_state_dict(torch.load(weights_path), strict = False)
         except RuntimeError as e:
             print(f'[Warning] Ignoring {e}')
             print(
@@ -199,7 +234,7 @@ def train(opt):
     model.train()
 
     num_iter_per_epoch = len(training_generator)
-
+           
     try:
         for epoch in range(opt.num_epochs):
             last_epoch = step // num_iter_per_epoch
@@ -223,10 +258,10 @@ def train(opt):
                         annot = annot.cuda()
 
                     optimizer.zero_grad()
-                    cls_loss, reg_loss = model(imgs, annot, obj_list=params.obj_list)
+                    cls_loss, reg_loss, regression, classification, anchors = model(imgs, annot, obj_list=params.obj_list)
                     cls_loss = cls_loss.mean()
                     reg_loss = reg_loss.mean()
-
+                    
                     loss = cls_loss + reg_loss
                     if loss == 0 or not torch.isfinite(loss):
                         continue
@@ -242,13 +277,16 @@ def train(opt):
                             step, epoch, opt.num_epochs, iter + 1, num_iter_per_epoch, cls_loss.item(),
                             reg_loss.item(), loss.item()))
                     writer.add_scalars('Loss', {'train': loss}, step)
+                    experiment.log_metric("Train_Loss", loss, step=step, epoch=epoch)
                     writer.add_scalars('Regression_loss', {'train': reg_loss}, step)
+                    experiment.log_metric("Train_Regression_loss", reg_loss, step=step, epoch=epoch)
                     writer.add_scalars('Classfication_loss', {'train': cls_loss}, step)
+                    experiment.log_metric("Train_Classfication_loss", cls_loss, step=step, epoch=epoch)
 
                     # log learning_rate
                     current_lr = optimizer.param_groups[0]['lr']
                     writer.add_scalar('learning_rate', current_lr, step)
-
+                    experiment.log_parameter("learning_rate", current_lr, step=step)
                     step += 1
 
                     if step % opt.save_interval == 0 and step > 0:
@@ -274,10 +312,18 @@ def train(opt):
                             imgs = imgs.cuda()
                             annot = annot.cuda()
 
-                        cls_loss, reg_loss = model(imgs, annot, obj_list=params.obj_list)
+                        cls_loss, reg_loss, regression, classification, anchors = model(imgs, annot, obj_list=params.obj_list)
                         cls_loss = cls_loss.mean()
                         reg_loss = reg_loss.mean()
 
+                        if iter < 40:
+                            output_image = plot_boxes(imgs[0, ...].unsqueeze(0).detach(),
+                                                    regression[0, ...].unsqueeze(0).detach(),
+                                                    classification[0, ...].unsqueeze(0).detach(),
+                                                    anchors, regressBoxes, clipBoxes, params.mean,
+                                                    params.std)
+                            experiment.log_image(output_image, name="val_prediction_{}".format(iter),image_channels="last",
+                                                 step=step)
                         loss = cls_loss + reg_loss
                         if loss == 0 or not torch.isfinite(loss):
                             continue
@@ -293,9 +339,11 @@ def train(opt):
                     'Val. Epoch: {}/{}. Classification loss: {:1.5f}. Regression loss: {:1.5f}. Total loss: {:1.5f}'.format(
                         epoch, opt.num_epochs, cls_loss, reg_loss, loss))
                 writer.add_scalars('Loss', {'val': loss}, step)
+                experiment.log_metric('Val_Loss', loss, step=step, epoch=epoch)
                 writer.add_scalars('Regression_loss', {'val': reg_loss}, step)
+                experiment.log_metric('Val_Regression_loss', reg_loss, step=step, epoch=epoch)
                 writer.add_scalars('Classfication_loss', {'val': cls_loss}, step)
-
+                experiment.log_metric('Val_Classfication_loss', cls_loss, step=step, epoch=epoch)
                 if loss + opt.es_min_delta < best_loss:
                     best_loss = loss
                     best_epoch = epoch
@@ -319,6 +367,7 @@ def save_checkpoint(model, name):
         torch.save(model.module.model.state_dict(), os.path.join(opt.saved_path, name))
     else:
         torch.save(model.model.state_dict(), os.path.join(opt.saved_path, name))
+    experiment.log_model("EfficientDet", os.path.join(opt.saved_path, name))
 
 
 if __name__ == '__main__':
