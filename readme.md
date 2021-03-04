@@ -94,8 +94,8 @@ The speed/FPS test includes the time of post-processing with no jit/data precisi
 To quickly see the code in action, create a <a href="https://www.comet.ml/">Comet API key</a>, and run the following:
 ```
 export COMET_API_KEY=YOUR-API-KEY 
-python train.py -c 0 -p 'YOUR-PORJECT-NAME' --head_only True --lr 5e-3 --batch_size 32 --load_weights 'PRETRAINED-WEIGHTS-PATH' --num_epochs 10 --save_interval 100
-python train.py -c 0 -p 'YOUR-PORJECT-NAME' --head_only False --lr 1e-3 --batch_size 8 --load_weights last  --num_epochs 30 --save_interval 100
+python train.py -c 0 -p 'YOUR-PROJECT-NAME' --head_only True --lr 5e-3 --batch_size 32 --load_weights 'PRETRAINED-WEIGHTS-PATH' --num_epochs 10 --save_interval 100
+python train.py -c 0 -p 'YOUR-PROJECT-NAME' --head_only False --lr 1e-3 --batch_size 8 --load_weights last  --num_epochs 30 --save_interval 100
 ```
 Demo Project: https://www.comet.ml/comet-papers/efficientdet <br /><br />
 <p align="center"><img src="https://user-images.githubusercontent.com/49341767/109946060-a745c300-7cf9-11eb-9bec-8cab5889e415.png" height="400px" /><br />
