@@ -91,6 +91,16 @@ The speed/FPS test includes the time of post-processing with no jit/data precisi
 
 ## Training
 
+To quickly see the code in action on Logo Dataset, create a <a href="https://www.comet.ml/">Comet API key</a>, and run the following:
+```
+export COMET_API_KEY=YOUR-API-KEY 
+python train.py -c 0 -p logo --head_only True --lr 5e-3 --batch_size 32 --load_weights 'PRETRAINED_WEIGHTS_PATH'  --num_epochs 10 --save_interval 100
+python train.py -c 0 -p logo --head_only False --lr 1e-3 --batch_size 8 --load_weights last  --num_epochs 30 --save_interval 100
+```
+Demo Project: https://www.comet.ml/comet-papers/efficientdet <br /><br />
+<p align="center"><img src="https://user-images.githubusercontent.com/49341767/109929816-ba9c6280-7ce8-11eb-8abd-fa35eebd7630.png" height="400px" /><br />
+Example prediction on training image logged in comet.</p>
+
 Training EfficientDet is a painful and time-consuming task. You shouldn't expect to get a good result within a day or two. Please be patient.
 
 Check out this [tutorial](tutorial/) if you are new to this. You can run it on colab with GPU support.
