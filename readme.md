@@ -99,7 +99,7 @@ python train.py -c 0 -p 'YOUR-PROJECT-NAME' --head_only False --lr 1e-3 --batch_
 ```
 Demo Project: https://www.comet.ml/comet-papers/efficientdet <br /><br />
 <p align="center"><img src="https://user-images.githubusercontent.com/49341767/109946060-a745c300-7cf9-11eb-9bec-8cab5889e415.png" height="400px" /><br />
-Example prediction on training image logged in comet.</p>
+Example prediction on validation image logged in comet.</p>
 
 Training EfficientDet is a painful and time-consuming task. You shouldn't expect to get a good result within a day or two. Please be patient.
 
